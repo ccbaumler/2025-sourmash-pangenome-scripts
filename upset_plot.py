@@ -16,12 +16,14 @@ df = pl.DataFrame([
     [e in set1, e in set2, e in set3]
     for e in all_elems
 ], columns=set_names)
+print(f"{df=}")
 
 # Group by membership and count
 df_up = df.groupby(set_names).len().rename({"len": "count"})
-
+print(f"{df_up=}")
 # Convert to Pandas for upsetplot
 df_pd = df_up.to_pandas()
+print(f"{df_pd=}")
 
 # Set MultiIndex from boolean columns
 df_pd.set_index(set_names, inplace=True)

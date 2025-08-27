@@ -1,4 +1,4 @@
-#! /usr/bin/env python
+#! /usr/bin/env python 
 
 import polars as pl
 import matplotlib.pyplot as plt
@@ -6,7 +6,8 @@ import seaborn as sns
 import sys
 import argparse
 from pathlib import Path
-sys.stdout.reconfigure(encoding='utf-8')
+
+sys.stdout.reconfigure(encoding='utf-8') 
 
 def get_default_output(input_file):
     fp = Path(input_file)
@@ -14,157 +15,171 @@ def get_default_output(input_file):
     print(base_path.name)
     return f"{base_path.name}"
 
+
 def main():
     p = argparse.ArgumentParser(description="Sourmash hash distribution using Polars")
     p.add_argument(
-        "--ranktable",
+        "ranktable",
         type=str,
-        default=None,
-        help="Path to input pangenome CSV file"
-        )
+        nargs="+",
+        help="Path(s) to input pangenome CSV file(s)"
+    )
     p.add_argument(
         "--filter",
         type=float,
         default=0.0,
         help="Remove all hashvals from the plot >= filter value"
-        )
+    )
     p.add_argument(
         "--xbins",
         type=int,
         default=100,
         help="Number of bins for x-axis normalization (E.g. 5, 20, 100)"
     )
-    # From https://gitlab.ub.uni-bielefeld.de/gi/pangrowth/-/blob/main/scripts/plot_hist.py?ref_type=heads
-    p.add_argument('--norm-y', choices=['multiplicity', 'percentage', 'both', 'none'], 
-                        default="none", 
-                        help='Normalize the y-axis values: '
-                         '"multiplicity" multiply each bar by the number of genomes it appears (unique items are multiplied by one, items appearing in two genomes are multiplied by two, and so on..), '
-                         '"percentage" normalizes by converting counts to a percentage of the total, '
-                         '"both" applies both multiplicity and percentage normalizations in sequence, '
-                         '"none" applies no normalization.')
+    p.add_argument('--norm-y', choices=['multiplicity', 'percentage', 'both', 'none'],
+        default="none",
+        help='Normalization method for the y-axis.')
     p.add_argument(
         "--output",
         type=str,
         nargs='?',
-        help='Output plot filename (defaulting to ranktable filename + .png',
+        help='Output plot filename (defaulting to first input filename + .png)',
     )
-    args=p.parse_args()
+    args = p.parse_args()
 
     bin_width = 1.0 / args.xbins
 
     if args.output is None:
-        args.output = get_default_output(args.ranktable)
+        args.output = get_default_output(args.ranktable[0])
 
-    df = pl.read_csv(args.ranktable)
+    all_df_list = []
 
-    if args.norm_y == 'multiplicity':
-        print(df)
-        df_count = (
-            df
-            .group_by('abund')
-            .len()
-            .sort("abund")
-            .with_columns(
-                (pl.col("abund") * pl.col("len")).alias("c"),
-                (pl.col('abund') / pl.col('abund').max()).round(2).alias('freq'),
+    for table_path in args.ranktable:
+        df = pl.read_csv(table_path)
+        filename = Path(table_path).stem
+        filename_with_max_abund = f"{filename} (Genome count: {df['abund'].max()})"
+
+        if args.norm_y == 'multiplicity':
+            df_count = (
+                df
+                .group_by('abund')
+                .len()
+                .sort('abund')
+                .with_columns([
+                    (pl.col('abund') * pl.col('len')).alias('c'),
+                    (pl.col('abund') / pl.col('abund').max()).round(2).alias('freq_bin')
+                ])
+                .with_columns(
+                    (pl.col('c') / pl.col('c').sum()).alias('norm_y')
+                )
             )
-        )
-        print(df_count)
-        (pl.col('c') / pl.col('c').sum()).alias('y_per')
-    if args.norm_y == 'percentage':
-        print(df)
-        df_count = (
-            df
-            .group_by('abund')
-            .len()
-            .sort("abund")
-            .with_columns(
-                (pl.col('abund') / pl.col('abund').max()).round(2).alias('freq'),
-                (pl.col('len') / pl.col('len').sum()).alias('y_perc')
+            df_filter = (
+                df_count
+                .group_by('freq_bin')
+                .agg(pl.sum('norm_y').alias('norm_y'))
+                .sort('freq_bin')
+                .filter(pl.col('freq_bin') >= args.filter)
             )
-        )
-        print(df_count)
-    if args.norm_y == 'both':
-        print(df)
-        df_count = (
-            df
-            .group_by('abund')
-            .len()
-            .sort("abund")
-            .with_columns(
-                (pl.col("abund") * pl.col("len")).alias("c"),
-            (
-                ((pl.col('abund') / pl.col('abund').max()) / bin_width)
-                .round() * bin_width
-            ).alias("freq_bin")
-           )
-        )
-        print(df_count)
-        df_norm = (
-            df_count
-            .with_columns(
-                (pl.col('c') / pl.col('c').sum()).alias('y_perc')
+
+        elif args.norm_y == 'percentage':
+            df_count = (
+                df
+                .group_by('abund')
+                .len()
+                .sort('abund')
+                .with_columns([
+                    (pl.col('abund') / pl.col('abund').max()).round(2).alias('freq_bin'),
+                    (pl.col('len') / pl.col('len').sum()).alias('norm_y')
+                ])
             )
-        )
-        df_filter = (
-            df_norm
-            .group_by("freq_bin")  # Group by the rounded freq
-            .agg(
-                pl.sum("y_perc").alias("norm_y")              # Count the rows in each group
+            df_filter = (
+                df_count
+                .group_by('freq_bin')
+                .agg(pl.sum('norm_y').alias('norm_y'))
+                .sort('freq_bin')
+                .filter(pl.col('freq_bin') >= args.filter)
             )
-            .sort("freq_bin")     # Sort by freq_bin (optional, for clean output)
-            .filter(pl.col("freq_bin") >= args.filter)
-        )
-        print(df_filter)
-    else:
-        df_filter = (
-            df.with_columns(
-                pl.col("freq").round(2).alias("freq_bin")  # Round and create new column
+
+        elif args.norm_y == 'both':
+            df_count = (
+                df
+                .group_by('abund')
+                .len()
+                .sort('abund')
+                .with_columns([
+                    (pl.col('abund') * pl.col('len')).alias('c'),
+                    (
+                        ((pl.col('abund') / pl.col('abund').max()) / bin_width)
+                        .round() * bin_width
+                    ).alias('freq_bin')
+                ])
             )
-            .group_by("freq_bin")  # Group by the rounded freq
-            .len()              # Count the rows in each group
-            .sort("freq_bin")     # Sort by freq_bin (optional, for clean output)
-            .filter(pl.col("freq_bin") >= args.filter)
+            df_norm = (
+                df_count
+                .with_columns(
+                    (pl.col('c') / pl.col('c').sum()).alias('norm_y')
+                )
+            )
+            df_filter = (
+                df_norm
+                .group_by('freq_bin')
+                .agg(pl.sum('norm_y').alias('norm_y'))
+                .sort('freq_bin')
+                .filter(pl.col('freq_bin') >= args.filter)
+            )
+
+        else:  # norm_y == 'none'
+            df_filter = (
+                df
+                .with_columns(
+                    (pl.col('abund') / pl.col('abund').max()).round(2).alias('freq_bin')
+                )
+                .group_by('freq_bin')
+                .len()
+                .sort('freq_bin')
+                .filter(pl.col('freq_bin') >= args.filter)
+                .rename({'len': 'norm_y'})
+            )
+
+        # this adds a label for seaborn hue and the legend
+        df_filter = df_filter.with_columns(
+            pl.lit(filename_with_max_abund).alias('label')
         )
-    
-    print(df_filter)
-    
-    
+        all_df_list.append(df_filter)
+
+    combined_df = pl.concat(all_df_list)
+
     plt.figure(figsize=(10, 6))
     sns.lineplot(
-        data=df_filter,
-        x="freq_bin",  # X = position
-        y='len' if not args.norm_y else 'norm_y',
-        marker='o'
+        data=combined_df,
+        x="freq_bin",
+        y="norm_y",
+        hue="label",
+        marker='o',
+        alpha=.5
     )
-    
-    ticks = df_filter["freq_bin"].to_list()
+
+    ticks = combined_df["freq_bin"].unique()
     tick_percents = [int(x * 100) for x in ticks]
-    
-    labels = [
-        f"{p}%" if p % 5 == 0 else ""
-        for p in tick_percents
-    ]
-    
+    labels = [f"{p}%" if p % 5 == 0 else "" for p in tick_percents]
+
     for i, (p, label) in enumerate(zip(tick_percents, labels)):
         if label != "":
             continue
-    
         has_close_label = any(
             abs(p - other_p) <= 3 and labels[j] != ""
             for j, other_p in enumerate(tick_percents) if j != i
         )
-    
         if not has_close_label:
             labels[i] = f"{p}%"
-    
+
+    plt.legend(title="Pangenome Ranktable")
     plt.xticks(ticks=ticks, labels=labels)
-   
     plt.xlabel('Percentage Quorum')
-    plt.ylabel('Hash frequency (Est. Core)')
-    plt.title('Line Plot of Frequency (90% - 100%)')
+    plt.ylabel('Hash frequency')
     plt.tight_layout()
-    plt.savefig(args.output, dpi=100)
+    plt.savefig(args.output, dpi=300)
+    print(f"Saved plot to: {args.output}")
 
 if __name__ == "__main__":
     main()
