@@ -1,3 +1,5 @@
+#! /usr/bin/env python
+
 import polars as pl
 import matplotlib.pyplot as plt
 from matplotlib.patches import Wedge
@@ -5,8 +7,15 @@ import seaborn as sns
 import sys
 import argparse
 import math
+from pathlib import Path
 
 sys.stdout.reconfigure(encoding='utf-8')
+
+def get_default_output(input_file):
+    fp = Path(input_file)
+    base_path = fp.with_name(fp.stem).with_suffix('.circles.png')
+    print(base_path.name)
+    return f"{base_path.name}"
 
 def main():
     p = argparse.ArgumentParser(description="Count frequency bins using Polars.")
@@ -28,7 +37,17 @@ def main():
         action='store_true',
         help="Keep all values <= the lowest value in --thresholds (<=0.1)"
     )
+    p.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        nargs='?',
+        help='Output plot filename (default to ranktable filename + .png'
+    )
     args = p.parse_args()
+
+    if args.output is None:
+        args.output = get_default_output(args.ranktable)
 
     df = pl.read_csv(args.ranktable)
     thresholds = sorted(args.thresholds, reverse=True)
@@ -89,14 +108,15 @@ def main():
         wedge.set_label(f"{label} -- {count} hashes")
         patches.append(wedge)
 
-    ax.legend(handles=patches, loc='upper right', bbox_to_anchor=(1.3, 1.0), title="Frequency Bins")
+    ax.legend(handles=patches, loc='lower left', title="Frequency Bins")
 
     ax.set_xlim(-sum(radii)*1.1, sum(radii)*1.1)
     ax.set_ylim(-sum(radii)*1.1, sum(radii)*1.1)
     ax.set_aspect("equal")
     ax.axis("off")
     plt.title("Concentric Circles of pangenomic elements")
-    plt.show()
+    plt.tight_layout()
+    plt.savefig(args.output, dpi=100)
 
 if __name__ == "__main__":
     main()

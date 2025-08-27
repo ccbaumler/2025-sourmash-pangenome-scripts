@@ -1,3 +1,5 @@
+#! /usr/bin/env python
+
 import polars as pl
 import matplotlib.pyplot as plt
 from matplotlib.patches import Wedge
