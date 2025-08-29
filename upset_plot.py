@@ -1,34 +1,69 @@
-import polars as pl
-import pandas as pd
-from upsetplot import plot
+#! /usr/bin/env python
+
+import csv
+import gzip
 import matplotlib.pyplot as plt
+from upsetplot import plot
+import argparse
+from pathlib import Path
+import pandas as pd
 
-# Define sets
-set1 = {0, 1, 2, 3, 4, 5}
-set2 = {3, 4, 5, 6, 10}
-set3 = {0, 5, 6, 7, 8, 9}
+def get_default_output(input_file, plottype='upset'):
+    fp = Path(input_file)
+    base_path = fp.with_name(fp.stem).with_suffix(f'.{plottype}.png')
+    print(base_path.name)
+    return f"{base_path.name}"
 
-set_names = ['set1', 'set2', 'set3']
-all_elems = sorted(set1 | set2 | set3)
+def main():
+    p = argparse.ArgumentParser()
 
-# Build Polars DataFrame showing membership
-df = pl.DataFrame([
-    [e in set1, e in set2, e in set3]
-    for e in all_elems
-], columns=set_names)
-print(f"{df=}")
+    p.add_argument('ranktable', type=str, nargs='+', help='The pangenome ranktable(s) for processing.')
+    p.add_argument('-f','--filter',type=float,default=0.0,help="Remove all hashvals from the plot <= filter value")
+    p.add_argument('-o','--output',type=str,nargs='?',help='Output plot filename (defaulting to first input filename + .png)')
 
-# Group by membership and count
-df_up = df.groupby(set_names).len().rename({"len": "count"})
-print(f"{df_up=}")
-# Convert to Pandas for upsetplot
-df_pd = df_up.to_pandas()
-print(f"{df_pd=}")
+    args = p.parse_args()
+    assert len(args.ranktable) > 1
+    sets = []
+    set_names = []
 
-# Set MultiIndex from boolean columns
-df_pd.set_index(set_names, inplace=True)
+    if args.output is None:
+        args.output = get_default_output(args.ranktable[0])
 
-# Plot
-plot(df_pd["count"], orientation='horizontal')
-plt.tight_layout()
-plt.show()
+    for i,table in enumerate(args.ranktable, start=1):
+        filepath = Path(table)
+        set_names.append(f'{filepath.stem}_hashvals')
+        hashval_set = set()
+        
+        open_func = gzip.open if filepath.suffix == '.gz' else open
+        
+        with open_func(table, mode='rt', newline='') as fp:
+            reader = csv.DictReader(fp)
+            
+            for row in reader:
+                freq = float(row['freq'])
+
+                if freq <= args.filter:
+                    break
+                
+                hashval = row['hashval']
+                hashval_set.add(hashval)
+
+        sets.append(hashval_set)
+
+    print(f"Found {len(sets)} sets.")
+    for name, s in zip(set_names, sets):
+        print(f"{name}: {len(s)} hashvals")
+
+    all_elems = list(set().union(*sets))
+    df = pd.DataFrame([[e in st for st in sets] for e in all_elems], columns = set_names)
+
+    df_up = df.groupby(set_names).size()
+
+    plot(df_up, orientation='horizontal')
+    plt.tight_layout()
+    plt.savefig(args.output, dpi=300)
+    print(f"Saved plot to: {args.output}")
+
+
+if __name__ == '__main__':
+    main()
