@@ -18,11 +18,15 @@ def main():
     p = argparse.ArgumentParser()
 
     p.add_argument('ranktable', type=str, nargs='+', help='The pangenome ranktable(s) for processing.')
-    p.add_argument('-f','--filter',type=float,default=0.0,help="Remove all hashvals from the plot <= filter value")
+    p.add_argument('-f','--filter',type=float,nargs='+',default=[1.0, 0.90],help="Remove all hashvals from the plot >= filter value")
     p.add_argument('-o','--output',type=str,nargs='?',help='Output plot filename (defaulting to first input filename + .png)')
 
     args = p.parse_args()
     assert len(args.ranktable) > 1
+    assert len(args.filter) == 2
+
+    threshold = sorted(args.filter, reverse=True)
+    
     sets = []
     set_names = []
 
@@ -42,7 +46,9 @@ def main():
             for row in reader:
                 freq = float(row['freq'])
 
-                if freq <= args.filter:
+                if freq >= threshold[0]:
+                    continue
+                if freq <= threshold[1]:
                     break
                 
                 hashval = row['hashval']
