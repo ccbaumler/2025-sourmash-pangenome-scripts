@@ -15,8 +15,8 @@ def main():
         "--picklist",
         metavar="FILE:COL:MODE",
         help=(
-            "Picklist in the form 'filename:column_name:include|exclude'. "
-            "Example: idents.txt:ident:include"
+            "Picklist in the form 'filename:column_name_file:colume_name_db_manifest:include|exclude'. "
+            "Example: idents.txt:ident:ident:include"
         )
     )
     p.add_argument("--moltype", default="DNA", type=str, help="Path to output file.")
