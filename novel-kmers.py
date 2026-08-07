@@ -91,12 +91,42 @@ def fitting(x_val, params):
     return params[0] * x_val**params[1] + params[2]
 
 def plot_totals(data, lineage, path, ext, h=5, w=12, line_width=1, marker='none',
-                yaxis='kmers', scaled=1000, permutations=0, alpha=0.3, plot_original=True, saturation=None):
+                yaxis='kmers', scaled=1000, permutations=0, alpha=0.3, plot_original=True, saturation=None, save_slopes=False):
     fpath = os.path.join(path + ext)
     plt.figure(figsize=(w,h))
 
     y_data = data if yaxis == "hashes" else [i * scaled for i in data]
     x = list(range(len(data)))
+
+    if save_slopes and len(x) > 2:
+        x_arr = np.array(x)
+        y_arr = np.array(y_data)
+
+        # Calculate slopes (dy/dx)
+        dy = np.diff(y_arr)
+        dx = np.diff(x_arr)
+        
+        # Avoid division by zero just in case x values are identical
+        dx = np.where(dx == 0, 1e-9, dx)
+        slopes = dy / dx
+
+        # Calculate the change in slopes
+        slope_changes = np.diff(slopes)
+
+        # Write to file using the same base path as the image
+        slope_file = f"{path}_slope_changes.txt"
+        
+        with open(slope_file, "w") as f:
+            f.write(f"{'X_Value':<15} | {'Slope_Before':<15} | {'Slope_After':<15} | {'Absolute_Change'}\n")
+            f.write("-" * 65 + "\n")
+            
+            for i in range(len(slope_changes)):
+                x_val = x_arr[i + 1]  # +1 aligns with the joint between segments
+                slope_before = slopes[i]
+                slope_after = slopes[i + 1]
+                abs_change = abs(slope_changes[i])
+                
+                f.write(f"{x_val:<15.4f} | {slope_before:<15.4f} | {slope_after:<15.4f} | {abs_change:.4f}\n")
 
     if permutations:
         if yaxis == "kmers":
@@ -278,30 +308,42 @@ def main():
     p.add_argument('-s', '--scaled', type=int, default=1000, help='The scaled value of the sourmash database')
     p.add_argument('--n-cols', type=int)
     p.add_argument('--sorted', action='store_true')
+    p.add_argument('--sorted-lineage', action='store_true')
     p.add_argument('--num-threads', type=int)
+    p.add_argument('--save-slopes', action="store_true")
 
     args = p.parse_args()
 
     print(f"Loading {args.data} as polars dataframe...")
 
-    if args.n_cols:
-        print(f'    Loading only {args.n_cols} columns...')
-        with open(args.data, 'r') as f:
-            header = next(csv.reader(f))
-        filtered = [col for col in header if col != 'hashval']
-        selected_cols = filtered[:args.n_cols]
+    df_lazy = pl.scan_csv(args.data)
+    if "hashval" in df_lazy.collect_schema().names():
+        df_lazy = df_lazy.drop("hashval")
 
-        df_lazy = pl.read_csv(args.data, columns=selected_cols).lazy()
-    else:
-        df_lazy = pl.scan_csv(args.data).drop("hashval")
+    if args.sorted_lineage:
+        cols = df_lazy.collect_schema().names()
+        sorted_cols = sorted(
+            cols, 
+            key=lambda c: c.split(' ', 1)[-1] if ' ' in c else c
+        )
+        df_lazy = df_lazy.select(sorted_cols)
+
+        with open("sorted_columns_by_header.txt", "w") as fp:
+            fp.write("\n".join(sorted_cols))
 
     print(df_lazy.explain(optimized=True))
-
     boolean_scan = df_lazy.with_columns([
         pl.col(col).cast(pl.Boolean) for col in df_lazy.collect_schema().names()
     ])
 
     df = boolean_scan.collect()
+
+    if args.n_cols:
+        n = int(args.n_cols)
+        print(f'    Limiting dataframe to {n} columns...')
+        df = df.select(df.columns[:n])
+
+    print(df)
 
     novel_counts = {}
     tots = 0
@@ -347,7 +389,6 @@ def main():
     root, ext = os.path.splitext(args.output)
 
     if args.plot == 'novel':
-        print(pl.Series("Novel counts:", novel_counts))
         plot_novels(novel_counts, path=root, ext=ext, lineage=args.lineage)
     elif args.plot == 'total':
         #total_counts = list(accumulate(sorted([v[1] for v in novel_counts.values()], reverse=True))) if args.sorted else list(accumulate(v[1] for v in novel_counts.values()))
@@ -421,6 +462,7 @@ def main():
                     lineage=args.lineage,
                     permutations=permutation_counts,
                     saturation=result.mean,
+                    save_slopes=args.save_slopes
                    )
     else:
         sys.exit("Choose a plot argument type!")
